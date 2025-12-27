@@ -3,6 +3,8 @@
  * @description Automatically sets replies to not ping the target, with per-user/per-server rules, context menu actions, and optional debug logging. Based off of Qb's NoReplyPing plugin.
  * @author FranticPanic
  * @version 1.5.0
+ * @source https://github.com/FranticPanic/BetterDiscord-Plugins/blob/main/NoReplyMention/NoReplyMention.plugin.js
+ * @updateUrl https://raw.githubusercontent.com/FranticPanic/BetterDiscord-Plugins/refs/heads/main/NoReplyMention/NoReplyMention.plugin.js
  */
 
 module.exports = class NoReplyMention {
