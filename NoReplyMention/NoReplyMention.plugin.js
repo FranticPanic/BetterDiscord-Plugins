@@ -8,6 +8,14 @@
  */
 
 module.exports = class NoReplyMention {
+  this.SelectedChannelStore = null;
+  this.SelectedGuildStore = null;
+
+  this.currentChannelId = null;
+  this.currentGuildId = null;
+
+  this.onContextChange = null;
+
   constructor(meta) {
     this.meta = meta;
     this.api = new BdApi(meta.name);
@@ -484,55 +492,105 @@ module.exports = class NoReplyMention {
 
   // ---------- BetterDiscord lifecycle ----------
 
-  start() {
-    if (!this.replyBar) {
-      this.error(
-        "Unable to start because the reply bar module could not be found."
-      );
-      return;
+start() {
+  
+  const { Webpack } = this.api;
+
+  this.SelectedChannelStore = Webpack.getByKeys("getChannelId", "getVoiceChannelId", {searchExports: true});
+  this.SelectedGuildStore = Webpack.getByKeys("getGuildId", "getLastSelectedGuildId", {searchExports: true});
+
+  if (!this.replyBar) {
+    this.error(
+      "Unable to start because the reply bar module could not be found."
+    );
+    return;
+  }
+
+  this.log("Starting plugin and patching reply bar…");
+
+    const update = () => {
+    try {
+      // Read state from the stores (no props required)
+      this.currentChannelId = this.SelectedChannelStore?.getChannelId?.() ?? null;
+      this.currentGuildId = this.SelectedGuildStore?.getGuildId?.() ?? null;
+
+      this.debug("Context updated from stores:", {
+        currentChannelId: this.currentChannelId,
+        currentGuildId: this.currentGuildId
+      });
+    } catch (e) {
+      this.warn("Failed to update context from stores:", e);
     }
+  };
 
-    this.log("Starting plugin and patching reply bar…");
+  this.onContextChange = update;
 
-    const { Patcher } = this.api;
+  // Prime cache once
+  update();
 
-    Patcher.before(...this.replyBar, (_thisArg, [props]) => {
-      const targetUserId = this.getTargetUserId(props);
-      const guildId = this.getGuildId(props);
-      const isDM = !guildId; // rough heuristic: no guild ⇒ DM
+  // Subscribe to changes (FluxStore concept: listeners)
+  if (this.SelectedChannelStore?.addChangeListener) {
+    this.SelectedChannelStore.addChangeListener(this.onContextChange);
+  }
+  if (this.SelectedGuildStore?.addChangeListener) {
+    this.SelectedGuildStore.addChangeListener(this.onContextChange);
+  }
 
-      this.debug("Patch before reply bar render:", {
-        targetUserId,
-        guildId,
-        isDM,
-        originalShouldMention: props.shouldMention,
-      });
+  const { Patcher } = this.api;
 
-      const shouldMention = this.shouldMentionUser(targetUserId, {
-        guildId,
-        isDM,
-      });
+  Patcher.before(...this.replyBar, (_thisArg, [props]) => {
+    const targetUserId = this.getTargetUserId(props);
+    const guildId = this.getGuildId(props);
+    const isDM = !guildId; // rough heuristic: no guild ⇒ DM
 
-      props.shouldMention = shouldMention;
-
-      this.debug("Updated props.shouldMention:", {
-        targetUserId,
-        guildId,
-        isDM,
-        newShouldMention: shouldMention,
-      });
+    this.debug("Patch before reply bar render:", {
+      targetUserId,
+      guildId,
+      isDM,
+      originalShouldMention: props.shouldMention,
     });
+
+    const shouldMention = this.shouldMentionUser(targetUserId, {
+      guildId,
+      isDM,
+    });
+
+    props.shouldMention = shouldMention;
+
+    this.debug("Updated props.shouldMention:", {
+      targetUserId,
+      guildId,
+      isDM,
+      newShouldMention: shouldMention,
+    });
+  });
 
     this.patchContextMenus();
     this.log("Patch applied successfully.");
   }
 
   stop() {
-    const { Patcher } = this.api;
-    this.log("Stopping plugin and unpatching all…");
-    Patcher.unpatchAll();
-    this.unpatchContextMenus();
-    this.log("All patches removed.");
+  const { Patcher } = this.api;
+  this.log("Stopping plugin and unpatching all…");
+  
+  try {
+    if (this.SelectedChannelStore?.removeChangeListener && this.onContextChange) {
+      this.SelectedChannelStore.removeChangeListener(this.onContextChange);
+    }
+    if (this.SelectedGuildStore?.removeChangeListener && this.onContextChange) {
+      this.SelectedGuildStore.removeChangeListener(this.onContextChange);
+    }
+  } catch (e) {
+    this.warn("Error while unsubscribing from stores:", e);
+  }
+
+  this.onContextChange = null;
+  this.currentChannelId = null;
+  this.currentGuildId = null;
+
+  Patcher.unpatchAll();
+  this.unpatchContextMenus();
+  this.log("All patches removed.");
   }
 
   // ---------- Settings panel ----------
