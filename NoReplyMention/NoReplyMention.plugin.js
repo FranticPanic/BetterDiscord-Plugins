@@ -2,31 +2,30 @@
  * @name NoReplyMention
  * @description Automatically sets replies to not ping the target, with per-user/per-server rules, context menu actions, and optional debug logging. Based off of Qb's NoReplyPing plugin.
  * @author FranticPanic
- * @version 1.5.0
+ * @version 1.6.0
  * @source https://github.com/FranticPanic/BetterDiscord-Plugins/blob/main/NoReplyMention/NoReplyMention.plugin.js
  * @updateUrl https://raw.githubusercontent.com/FranticPanic/BetterDiscord-Plugins/refs/heads/main/NoReplyMention/NoReplyMention.plugin.js
  */
 
 module.exports = class NoReplyMention {
-  this.SelectedChannelStore = null;
-  this.SelectedGuildStore = null;
-
-  this.currentChannelId = null;
-  this.currentGuildId = null;
-
-  this.onContextChange = null;
-
   constructor(meta) {
     this.meta = meta;
     this.api = new BdApi(meta.name);
 
     const { Filters } = this.api.Webpack;
     this.replyBar = this.getModuleAndKey(
-      Filters.byStrings('type:"CREATE_PENDING_REPLY"')
+      Filters.byStrings('type:"CREATE_PENDING_REPLY"'),
     );
 
     this.settings = this.loadSettings();
     this.cmPatches = [];
+
+    // ---------- FluxStore-derived context ----------
+    this.SelectedChannelStore = null;
+    this.SelectedGuildStore = null;
+    this.currentChannelId = null;
+    this.currentGuildId = null;
+    this.onContextChange = null;
 
     this.log("Initialized plugin with settings:", this.settings);
   }
@@ -131,7 +130,7 @@ module.exports = class NoReplyMention {
       return;
     }
     const key = Object.keys(module.exports).find(
-      (k) => module.exports[k] === value
+      (k) => module.exports[k] === value,
     );
     this.debug("Resolved reply bar module and key:", { module, key });
     return [module.exports, key];
@@ -166,30 +165,26 @@ module.exports = class NoReplyMention {
    * Try to get the guild ID (server) from props.
    * If null/undefined, we treat it as a DM context.
    */
-  let guildId = null;
+  getGuildId(props) {
+    if (!props) return null;
 
-  try {
-    if (props?.channel?.guild_id) guildId = props.channel.guild_id;
-    else if (props?.message?.message?.guild_id) guildId = props.message.message.guild_id;
-    else if (props?.message?.guild_id) guildId = props.message.guild_id;
-  } catch (e) {
-    this.warn("Error while trying to resolve guild id from props:", e);
+    let guildId = null;
+
+    try {
+      if (props?.channel?.guild_id) guildId = props.channel.guild_id;
+      else if (props?.message?.message?.guild_id)
+        guildId = props.message.message.guild_id;
+      else if (props?.message?.guild_id) guildId = props.message.guild_id;
+    } catch (e) {
+      this.warn("Error while trying to resolve guild id from props:", e);
+    }
+
+    if (!guildId) guildId = this.currentGuildId;
+
+    this.debug("getGuildId resolved:", { guildId });
+    return guildId;
   }
 
-  // Fallback: FluxStore-derived context
-  if (!guildId) guildId = this.currentGuildId;
-
-  this.debug("getGuildId resolved:", { guildId });
-  return guildId;
-}
-
-  /**
-   * Decide whether to mention based on:
-   * - user blacklist / whitelist
-   * - server blacklist / whitelist
-   * - DM default
-   * - global default (no ping)
-   */
   shouldMentionUser(targetUserId, context = {}) {
     const { guildId, isDM } = context;
     const {
@@ -222,7 +217,6 @@ module.exports = class NoReplyMention {
       serverBlacklistRespectsWhitelist,
     });
 
-    // 1. User blacklist: absolute no
     if (inUserBlacklist) {
       this.log("Decision: DO NOT mention - user is in user blacklist", {
         targetUserId,
@@ -231,32 +225,27 @@ module.exports = class NoReplyMention {
       return false;
     }
 
-    // 2. Server blacklist logic
     if (inGuildBlacklist) {
       if (serverBlacklistRespectsWhitelist && inUserWhitelist) {
-        // Whitelisted user is allowed to bypass server blacklist
         this.log(
           "Guild is in server blacklist, but 'serverBlacklistRespectsWhitelist' is enabled and user is in whitelist; allowing whitelist to apply.",
           {
             targetUserId,
             guildId,
-          }
+          },
         );
-        // fall through to whitelist rule below
       } else {
-        // Hard block for this server
         this.log(
           "Decision: DO NOT mention - guild is in server blacklist (hard block for this context)",
           {
             targetUserId,
             guildId,
-          }
+          },
         );
         return false;
       }
     }
 
-    // 3. User whitelist (now safe to apply, considering server blacklist logic above)
     if (inUserWhitelist) {
       this.log("Decision: mention - user is in user whitelist", {
         targetUserId,
@@ -265,7 +254,6 @@ module.exports = class NoReplyMention {
       return true;
     }
 
-    // 4. Per-server ping list (only if not blocked by blacklist above)
     if (inGuildPingList) {
       this.log("Decision: mention - guild is in server ping list", {
         guildId,
@@ -274,7 +262,6 @@ module.exports = class NoReplyMention {
       return true;
     }
 
-    // 5. DM default
     if (!guildId && isDM && pingInDMs) {
       this.log("Decision: mention - DM context with pingInDMs enabled", {
         targetUserId,
@@ -282,7 +269,6 @@ module.exports = class NoReplyMention {
       return true;
     }
 
-    // 6. Global default: do NOT ping
     this.log("Decision: DO NOT mention - fell through to global default", {
       targetUserId,
       guildId,
@@ -291,13 +277,13 @@ module.exports = class NoReplyMention {
     return false;
   }
 
-  // ---------- Context menu patching ----------
+  // -  --------- Context menu patching ----------
 
   patchContextMenus() {
     const ContextMenu = BdApi.ContextMenu;
     if (!ContextMenu || !ContextMenu.patch) {
       this.warn(
-        "ContextMenu API not available; skipping context menu patches."
+        "ContextMenu API not available; skipping context menu patches.",
       );
       return;
     }
@@ -310,7 +296,7 @@ module.exports = class NoReplyMention {
         } catch (e) {
           this.error("Error in user-context menu patch:", e);
         }
-      })
+      }),
     );
 
     // Guild context menu (right-click server icon)
@@ -321,7 +307,7 @@ module.exports = class NoReplyMention {
         } catch (e) {
           this.error("Error in guild-context menu patch:", e);
         }
-      })
+      }),
     );
 
     this.log("Context menu patches applied.");
@@ -350,7 +336,6 @@ module.exports = class NoReplyMention {
       return;
     }
 
-    // menu tree might not be a simple array, be conservative
     const children = tree?.props?.children;
     if (!Array.isArray(children)) {
       this.debug("User context menu children is not an array; skipping.");
@@ -360,7 +345,7 @@ module.exports = class NoReplyMention {
     // Avoid duplicate submenu
     if (
       children.some(
-        (c) => c && c.props && c.props.id === "noreplymention-user-submenu"
+        (c) => c && c.props && c.props.id === "noreplymention-user-submenu",
       )
     ) {
       return;
@@ -379,7 +364,6 @@ module.exports = class NoReplyMention {
           this.log("Removed user from whitelist via context menu:", userId);
         } else {
           this.addToList("whitelist", userId);
-          // optional: remove from blacklist if present
           this.removeFromList("blacklist", userId);
           this.log("Added user to whitelist via context menu:", userId);
         }
@@ -396,7 +380,6 @@ module.exports = class NoReplyMention {
           this.log("Removed user from blacklist via context menu:", userId);
         } else {
           this.addToList("blacklist", userId);
-          // optional: remove from whitelist if present
           this.removeFromList("whitelist", userId);
           this.log("Added user to blacklist via context menu:", userId);
         }
@@ -431,7 +414,7 @@ module.exports = class NoReplyMention {
 
     if (
       children.some(
-        (c) => c && c.props && c.props.id === "noreplymention-guild-submenu"
+        (c) => c && c.props && c.props.id === "noreplymention-guild-submenu",
       )
     ) {
       return;
@@ -449,7 +432,7 @@ module.exports = class NoReplyMention {
           this.removeFromList("pingServers", guildId);
           this.log(
             "Removed server from pingServers via context menu:",
-            guildId
+            guildId,
           );
         } else {
           this.addToList("pingServers", guildId);
@@ -467,13 +450,13 @@ module.exports = class NoReplyMention {
           this.removeFromList("blacklistServers", guildId);
           this.log(
             "Removed server from blacklistServers via context menu:",
-            guildId
+            guildId,
           );
         } else {
           this.addToList("blacklistServers", guildId);
           this.log(
             "Added server to blacklistServers via context menu:",
-            guildId
+            guildId,
           );
         }
       },
@@ -489,110 +472,138 @@ module.exports = class NoReplyMention {
     children.push(submenu);
   }
 
-  // ---------- BetterDiscord lifecycle ----------
+  // ---------- FluxStore context helpers ----------
+  setupContextStores() {
+    const { Webpack } = this.api;
 
-start() {
-  
-  const { Webpack } = this.api;
-
-  this.SelectedChannelStore = Webpack.getByKeys("getChannelId", "getVoiceChannelId", {searchExports: true});
-  this.SelectedGuildStore = Webpack.getByKeys("getGuildId", "getLastSelectedGuildId", {searchExports: true});
-
-  if (!this.replyBar) {
-    this.error(
-      "Unable to start because the reply bar module could not be found."
-    );
-    return;
-  }
-
-  this.log("Starting plugin and patching reply bar…");
+    try {
+      this.SelectedChannelStore = Webpack.getByKeys(
+        "getChannelId",
+        "getVoiceChannelId",
+        { searchExports: true },
+      );
+      this.SelectedGuildStore = Webpack.getByKeys(
+        "getGuildId",
+        "getLastSelectedGuildId",
+        { searchExports: true },
+      );
+    } catch (e) {
+      this.warn("Failed to resolve context stores:", e);
+      this.SelectedChannelStore = null;
+      this.SelectedGuildStore = null;
+    }
 
     const update = () => {
+      try {
+        this.currentChannelId =
+          this.SelectedChannelStore?.getChannelId?.() ?? null;
+        this.currentGuildId = this.SelectedGuildStore?.getGuildId?.() ?? null;
+
+        this.debug("Context updated from stores:", {
+          currentChannelId: this.currentChannelId,
+          currentGuildId: this.currentGuildId,
+        });
+      } catch (e) {
+        this.warn("Failed to update context from stores:", e);
+      }
+    };
+
+    this.onContextChange = update;
+
+    update();
+
     try {
-      // Read state from the stores (no props required)
-      this.currentChannelId = this.SelectedChannelStore?.getChannelId?.() ?? null;
-      this.currentGuildId = this.SelectedGuildStore?.getGuildId?.() ?? null;
-
-      this.debug("Context updated from stores:", {
-        currentChannelId: this.currentChannelId,
-        currentGuildId: this.currentGuildId
-      });
+      if (this.SelectedChannelStore?.addChangeListener) {
+        this.SelectedChannelStore.addChangeListener(this.onContextChange);
+      }
+      if (this.SelectedGuildStore?.addChangeListener) {
+        this.SelectedGuildStore.addChangeListener(this.onContextChange);
+      }
     } catch (e) {
-      this.warn("Failed to update context from stores:", e);
+      this.warn("Failed to subscribe to context stores:", e);
     }
-  };
-
-  this.onContextChange = update;
-
-  // Prime cache once
-  update();
-
-  // Subscribe to changes (FluxStore concept: listeners)
-  if (this.SelectedChannelStore?.addChangeListener) {
-    this.SelectedChannelStore.addChangeListener(this.onContextChange);
-  }
-  if (this.SelectedGuildStore?.addChangeListener) {
-    this.SelectedGuildStore.addChangeListener(this.onContextChange);
   }
 
-  const { Patcher } = this.api;
+  teardownContextStores() {
+    try {
+      if (
+        this.SelectedChannelStore?.removeChangeListener &&
+        this.onContextChange
+      ) {
+        this.SelectedChannelStore.removeChangeListener(this.onContextChange);
+      }
+      if (
+        this.SelectedGuildStore?.removeChangeListener &&
+        this.onContextChange
+      ) {
+        this.SelectedGuildStore.removeChangeListener(this.onContextChange);
+      }
+    } catch (e) {
+      this.warn("Error while unsubscribing from context stores:", e);
+    }
 
-  Patcher.before(...this.replyBar, (_thisArg, [props]) => {
-    const targetUserId = this.getTargetUserId(props);
-    const guildId = this.getGuildId(props);
-    const isDM = !guildId; // rough heuristic: no guild ⇒ DM
+    this.onContextChange = null;
+    this.currentChannelId = null;
+    this.currentGuildId = null;
+    this.SelectedChannelStore = null;
+    this.SelectedGuildStore = null;
+  }
 
-    this.debug("Patch before reply bar render:", {
-      targetUserId,
-      guildId,
-      isDM,
-      originalShouldMention: props.shouldMention,
+  // ---------- BetterDiscord lifecycle ----------
+
+  start() {
+    if (!this.replyBar) {
+      this.error(
+        "Unable to start because the reply bar module could not be found.",
+      );
+      return;
+    }
+
+    this.log("Starting plugin and patching reply bar…");
+
+    this.setupContextStores();
+
+    const { Patcher } = this.api;
+
+    Patcher.before(...this.replyBar, (_thisArg, [props]) => {
+      const targetUserId = this.getTargetUserId(props);
+      const guildId = this.getGuildId(props);
+      const isDM = !guildId;
+
+      this.debug("Patch before reply bar render:", {
+        targetUserId,
+        guildId,
+        isDM,
+        originalShouldMention: props.shouldMention,
+      });
+
+      const shouldMention = this.shouldMentionUser(targetUserId, {
+        guildId,
+        isDM,
+      });
+
+      props.shouldMention = shouldMention;
+
+      this.debug("Updated props.shouldMention:", {
+        targetUserId,
+        guildId,
+        isDM,
+        newShouldMention: shouldMention,
+      });
     });
-
-    const shouldMention = this.shouldMentionUser(targetUserId, {
-      guildId,
-      isDM,
-    });
-
-    props.shouldMention = shouldMention;
-
-    this.debug("Updated props.shouldMention:", {
-      targetUserId,
-      guildId,
-      isDM,
-      newShouldMention: shouldMention,
-    });
-  });
 
     this.patchContextMenus();
     this.log("Patch applied successfully.");
   }
 
   stop() {
-  const { Patcher } = this.api;
-  this.log("Stopping plugin and unpatching all…");
-  
-  try {
-    if (this.SelectedChannelStore?.removeChangeListener && this.onContextChange) {
-      this.SelectedChannelStore.removeChangeListener(this.onContextChange);
-    }
-    if (this.SelectedGuildStore?.removeChangeListener && this.onContextChange) {
-      this.SelectedGuildStore.removeChangeListener(this.onContextChange);
-    }
-  } catch (e) {
-    this.warn("Error while unsubscribing from stores:", e);
+    const { Patcher } = this.api;
+    this.log("Stopping plugin and unpatching all…");
+    this.teardownContextStores();
+    Patcher.unpatchAll();
+    this.unpatchContextMenus();
+    this.log("All patches removed.");
   }
-
-  this.onContextChange = null;
-  this.currentChannelId = null;
-  this.currentGuildId = null;
-
-  Patcher.unpatchAll();
-  this.unpatchContextMenus();
-  this.log("All patches removed.");
-  }
-
-  // ---------- Settings panel ----------
 
   // ---------- Settings panel ----------
 
@@ -728,7 +739,7 @@ start() {
 
     const userCard = makeCard(
       "User Rules",
-      "Control which users are always pinged or never pinged when you reply."
+      "Control which users are always pinged or never pinged when you reply.",
     );
 
     const userWhitelistRow = makeTextareaRow(
@@ -738,7 +749,7 @@ start() {
       (value) => {
         this.settings.whitelist = this.parseList(value);
         this.saveSettings();
-      }
+      },
     );
 
     const userBlacklistRow = makeTextareaRow(
@@ -748,7 +759,7 @@ start() {
       (value) => {
         this.settings.blacklist = this.parseList(value);
         this.saveSettings();
-      }
+      },
     );
 
     userCard.content.appendChild(userWhitelistRow);
@@ -759,7 +770,7 @@ start() {
 
     const serverCard = makeCard(
       "Server Rules",
-      "Set default reply behavior per server, and control how server blacklists interact with user whitelists."
+      "Set default reply behavior per server, and control how server blacklists interact with user whitelists.",
     );
 
     const serverPingRow = makeTextareaRow(
@@ -769,7 +780,7 @@ start() {
       (value) => {
         this.settings.pingServers = this.parseList(value);
         this.saveSettings();
-      }
+      },
     );
 
     const serverBlacklistRow = makeTextareaRow(
@@ -779,7 +790,7 @@ start() {
       (value) => {
         this.settings.blacklistServers = this.parseList(value);
         this.saveSettings();
-      }
+      },
     );
 
     const serverBLToggleRow = makeCheckboxRow(
@@ -789,7 +800,7 @@ start() {
         this.settings.serverBlacklistRespectsWhitelist = checked;
         this.saveSettings();
       },
-      "If enabled, whitelisted users will still be pinged even in servers listed above. If disabled, those servers always prevent pings."
+      "If enabled, whitelisted users will still be pinged even in servers listed above. If disabled, those servers always prevent pings.",
     );
 
     serverCard.content.appendChild(serverPingRow);
@@ -801,7 +812,7 @@ start() {
 
     const behaviorCard = makeCard(
       "Reply Behavior",
-      "Control how replies behave outside of specific user/server rules."
+      "Control how replies behave outside of specific user/server rules.",
     );
 
     const dmToggleRow = makeCheckboxRow(
@@ -811,7 +822,7 @@ start() {
         this.settings.pingInDMs = checked;
         this.saveSettings();
       },
-      "When enabled, replies in DMs will ping the other person unless user/server rules say otherwise."
+      "When enabled, replies in DMs will ping the other person unless user/server rules say otherwise.",
     );
 
     behaviorCard.content.appendChild(dmToggleRow);
@@ -821,7 +832,7 @@ start() {
 
     const loggingCard = makeCard(
       "Logging & Debugging",
-      "Enable console output to help understand why a reply will or won’t ping."
+      "Enable console output to help understand why a reply will or won’t ping.",
     );
 
     const loggingToggleRow = makeCheckboxRow(
@@ -831,7 +842,7 @@ start() {
         this.settings.enableLogging = checked;
         this.saveSettings();
       },
-      "Logs key decisions and errors to the DevTools console (Ctrl+Shift+I → Console)."
+      "Logs key decisions and errors to the DevTools console (Ctrl+Shift+I → Console).",
     );
 
     const verboseToggleRow = makeCheckboxRow(
@@ -841,7 +852,7 @@ start() {
         this.settings.verboseLogging = checked;
         this.saveSettings();
       },
-      "Adds extra internal details and context to logs. Useful if something behaves unexpectedly."
+      "Adds extra internal details and context to logs. Useful if something behaves unexpectedly.",
     );
 
     const info = document.createElement("div");
