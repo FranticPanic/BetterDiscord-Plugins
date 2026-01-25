@@ -166,23 +166,22 @@ module.exports = class NoReplyMention {
    * Try to get the guild ID (server) from props.
    * If null/undefined, we treat it as a DM context.
    */
-  getGuildId(props) {
-    if (!props) return null;
+  let guildId = null;
 
-    let guildId = null;
-
-    try {
-      if (props.channel?.guild_id) guildId = props.channel.guild_id;
-      else if (props.message?.message?.guild_id)
-        guildId = props.message.message.guild_id;
-      else if (props.message?.guild_id) guildId = props.message.guild_id;
-    } catch (e) {
-      this.warn("Error while trying to resolve guild id:", e);
-    }
-
-    this.debug("getGuildId resolved:", { guildId });
-    return guildId;
+  try {
+    if (props?.channel?.guild_id) guildId = props.channel.guild_id;
+    else if (props?.message?.message?.guild_id) guildId = props.message.message.guild_id;
+    else if (props?.message?.guild_id) guildId = props.message.guild_id;
+  } catch (e) {
+    this.warn("Error while trying to resolve guild id from props:", e);
   }
+
+  // Fallback: FluxStore-derived context
+  if (!guildId) guildId = this.currentGuildId;
+
+  this.debug("getGuildId resolved:", { guildId });
+  return guildId;
+}
 
   /**
    * Decide whether to mention based on:
