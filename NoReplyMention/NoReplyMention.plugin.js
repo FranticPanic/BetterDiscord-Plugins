@@ -2,7 +2,7 @@
  * @name NoReplyMention
  * @description Automatically sets replies to not ping the target, with per-user/per-server rules, context menu actions, and optional debug logging. Based off of Qb's NoReplyPing plugin.
  * @author FranticPanic
- * @version 1.7.0
+ * @version 1.7.1
  * @source https://github.com/FranticPanic/BetterDiscord-Plugins/tree/main/NoReplyMention
  * @updateUrl https://raw.githubusercontent.com/FranticPanic/BetterDiscord-Plugins/main/NoReplyMention/NoReplyMention.plugin.js
  */
@@ -605,24 +605,33 @@ module.exports = class NoReplyMention {
 
       if (!isNewerSemver(remoteVersion, currentVersion)) return;
 
-      BdApi.UI.showNotification(`${this.meta.name} update available`, {
-        body: `New version: ${remoteVersion} (you have ${currentVersion})`,
-        confirmText: "Update",
-        cancelText: "Later",
-        onConfirm: async () => {
-          const pluginPath = path.join(
-            BdApi.Plugins.folder,
-            `${this.meta.name}.plugin.js`,
-          );
-          await fs.promises.writeFile(pluginPath, remoteSource, "utf8");
+      BdApi.UI.showNotification({
+        title: `${this.meta.name} update available`,
+        content: `New version: ${remoteVersion} (you have ${currentVersion})`,
+        actions: [
+          {
+            label: "Update",
+            onClick: async () => {
+              const pluginPath = path.join(
+                BdApi.Plugins.folder,
+                `${this.meta.name}.plugin.js`,
+              );
+              await new Promise((r) =>
+                fs.writefile(pluginPath, remoteSource, r),
+              );
 
-          // Reload to apply immediately (optional; BD will also load it next restart)
-          if (BdApi.Plugins?.reload) BdApi.Plugins.reload(this.meta.name);
+              // Reload to apply immediately (optional; BD will also load it next restart)
+              if (BdApi.Plugins?.reload) BdApi.Plugins.reload(this.meta.name);
 
-          BdApi.UI.showToast(`${this.meta.name} updated to ${remoteVersion}`, {
-            type: "success",
-          });
-        },
+              BdApi.UI.showToast(
+                `${this.meta.name} updated to ${remoteVersion}`,
+                {
+                  type: "success",
+                },
+              );
+            },
+          },
+        ],
       });
     } catch (e) {
       // Don’t spam users; log quietly unless debugging
