@@ -2,10 +2,40 @@
  * @name NoReplyMention
  * @description Automatically sets replies to not ping the target, with per-user/per-server rules, context menu actions, and optional debug logging. Based off of Qb's NoReplyPing plugin.
  * @author FranticPanic
- * @version 1.6.0
- * @source https://github.com/FranticPanic/BetterDiscord-Plugins/blob/main/NoReplyMention/NoReplyMention.plugin.js
- * @updateUrl https://raw.githubusercontent.com/FranticPanic/BetterDiscord-Plugins/refs/heads/main/NoReplyMention/NoReplyMention.plugin.js
+ * @version 1.7.0
+ * @source https://github.com/FranticPanic/BetterDiscord-Plugins/tree/main/NoReplyMention
+ * @updateUrl https://raw.githubusercontent.com/FranticPanic/BetterDiscord-Plugins/main/NoReplyMention/NoReplyMention.plugin.js
  */
+
+const fs = require("fs");
+const path = require("path");
+const UPDATE_URL =
+  "https://raw.githubusercontent.com/FranticPanic/BetterDiscord-Plugins/main/NoReplyMention/NoReplyMention.plugin.js";
+
+function parseVersionFromPluginSource(source) {
+  // looks for: * @version 1.2.3
+  const match = source.match(
+    /^\s*\*\s*@version\s+([0-9]+(?:\.[0-9]+){0,3})\s*$/m,
+  );
+  return match ? match[1] : null;
+}
+
+function isNewerSemver(remote, local) {
+  const r = String(remote)
+    .split(".")
+    .map((n) => parseInt(n, 10));
+  const l = String(local)
+    .split(".")
+    .map((n) => parseInt(n, 10));
+  const len = Math.max(r.length, l.length);
+  for (let i = 0; i < len; i++) {
+    const rv = r[i] ?? 0;
+    const lv = l[i] ?? 0;
+    if (rv > lv) return true;
+    if (rv < lv) return false;
+  }
+  return false;
+}
 
 module.exports = class NoReplyMention {
   constructor(meta) {
@@ -27,7 +57,30 @@ module.exports = class NoReplyMention {
     this.currentGuildId = null;
     this.onContextChange = null;
 
-    this.log("Initialized plugin with settings:", this.settings);
+    console.log("Initialized plugin with settings:", this.settings);
+    console.debug(this.meta);
+  }
+
+  // ---------- Logging helpers ----------
+
+  log(...args) {
+    if (!this.settings?.enableLogging) return;
+    console.log(`[${this.meta.name}]`, ...args);
+  }
+
+  debug(...args) {
+    if (!this.settings?.enableLogging || !this.settings?.verboseLogging) return;
+    console.debug(`[${this.meta.name}:debug]`, ...args);
+  }
+
+  warn(...args) {
+    if (!this.settings?.enableLogging) return;
+    console.warn(`[${this.meta.name}:warn]`, ...args);
+  }
+
+  error(...args) {
+    // Errors always log, even if logging is disabled
+    console.error(`[${this.meta.name}:error]`, ...args);
   }
 
   // ---------- Settings helpers ----------
@@ -93,28 +146,6 @@ module.exports = class NoReplyMention {
     if (!Array.isArray(list)) return;
     this.settings[listName] = list.filter((x) => x !== id);
     this.saveSettings();
-  }
-
-  // ---------- Logging helpers ----------
-
-  log(...args) {
-    if (!this.settings?.enableLogging) return;
-    console.log(`[${this.meta.name}]`, ...args);
-  }
-
-  debug(...args) {
-    if (!this.settings?.enableLogging || !this.settings?.verboseLogging) return;
-    console.debug(`[${this.meta.name}:debug]`, ...args);
-  }
-
-  warn(...args) {
-    if (!this.settings?.enableLogging) return;
-    console.warn(`[${this.meta.name}:warn]`, ...args);
-  }
-
-  error(...args) {
-    // Errors always log, even if logging is disabled
-    console.error(`[${this.meta.name}:error]`, ...args);
   }
 
   // ---------- Internal helpers ----------
@@ -474,15 +505,15 @@ module.exports = class NoReplyMention {
 
   // ---------- FluxStore context helpers ----------
   setupContextStores() {
-    const { Webpack } = this.api;
+    const { getByKeys } = this.api.Webpack;
 
     try {
-      this.SelectedChannelStore = Webpack.getByKeys(
+      this.SelectedChannelStore = getByKeys(
         "getChannelId",
         "getVoiceChannelId",
         { searchExports: true },
       );
-      this.SelectedGuildStore = Webpack.getByKeys(
+      this.SelectedGuildStore = getByKeys(
         "getGuildId",
         "getLastSelectedGuildId",
         { searchExports: true },
@@ -549,6 +580,56 @@ module.exports = class NoReplyMention {
     this.SelectedGuildStore = null;
   }
 
+  // ---------- Updater helpers  ----------
+
+  async checkForUpdates() {
+    try {
+      const updateUrl = UPDATE_URL;
+      const currentVersion = this.meta?.version;
+
+      if (!updateUrl || !currentVersion) return;
+
+      // Use BdApi.Net.fetch if available; fallback to fetch
+      let res;
+      if (BdApi?.Net?.fetch) {
+        res = await BdApi.Net.fetch(updateUrl);
+      } else {
+        res = await fetch(updateUrl);
+      }
+
+      if (!res || !res.ok) return;
+
+      const remoteSource = await res.text();
+      const remoteVersion = parseVersionFromPluginSource(remoteSource);
+      if (!remoteVersion) return;
+
+      if (!isNewerSemver(remoteVersion, currentVersion)) return;
+
+      BdApi.UI.showNotification(`${this.meta.name} update available`, {
+        body: `New version: ${remoteVersion} (you have ${currentVersion})`,
+        confirmText: "Update",
+        cancelText: "Later",
+        onConfirm: async () => {
+          const pluginPath = path.join(
+            BdApi.Plugins.folder,
+            `${this.meta.name}.plugin.js`,
+          );
+          await fs.promises.writeFile(pluginPath, remoteSource, "utf8");
+
+          // Reload to apply immediately (optional; BD will also load it next restart)
+          if (BdApi.Plugins?.reload) BdApi.Plugins.reload(this.meta.name);
+
+          BdApi.UI.showToast(`${this.meta.name} updated to ${remoteVersion}`, {
+            type: "success",
+          });
+        },
+      });
+    } catch (e) {
+      // Don’t spam users; log quietly unless debugging
+      console.error(`[${this.meta?.name ?? "Plugin"}] update check failed`, e);
+    }
+  }
+
   // ---------- BetterDiscord lifecycle ----------
 
   start() {
@@ -594,6 +675,8 @@ module.exports = class NoReplyMention {
 
     this.patchContextMenus();
     this.log("Patch applied successfully.");
+    this.log("Checking for updates...");
+    this.checkForUpdates();
   }
 
   stop() {
