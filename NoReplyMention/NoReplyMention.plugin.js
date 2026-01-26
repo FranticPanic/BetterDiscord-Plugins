@@ -308,7 +308,7 @@ module.exports = class NoReplyMention {
     return false;
   }
 
-  // -  --------- Context menu patching ----------
+  // ---------- Context menu patching ----------
 
   patchContextMenus() {
     const ContextMenu = BdApi.ContextMenu;
