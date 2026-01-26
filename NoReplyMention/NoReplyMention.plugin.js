@@ -2,7 +2,7 @@
  * @name NoReplyMention
  * @description Automatically sets replies to not ping the target, with per-user/per-server rules, context menu actions, and optional debug logging. Based off of Qb's NoReplyPing plugin.
  * @author FranticPanic
- * @version 1.7.1
+ * @version 1.7.2
  * @source https://github.com/FranticPanic/BetterDiscord-Plugins/tree/main/NoReplyMention
  * @updateUrl https://raw.githubusercontent.com/FranticPanic/BetterDiscord-Plugins/main/NoReplyMention/NoReplyMention.plugin.js
  */
@@ -617,7 +617,7 @@ module.exports = class NoReplyMention {
                 `${this.meta.name}.plugin.js`,
               );
               await new Promise((r) =>
-                fs.writefile(pluginPath, remoteSource, r),
+                fs.writeFile(pluginPath, remoteSource, r),
               );
 
               // Reload to apply immediately (optional; BD will also load it next restart)
